@@ -1,5 +1,4 @@
 (function() {
-
     var _map_id;
     var _layer_id;
     var _data_map;
