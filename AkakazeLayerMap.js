@@ -2,7 +2,7 @@
  * Akakaze - LayerMap
  * By IF_Akakaze - https://github.com/akakaze/RMMVplg
  * AkakazeLayerMap.js
- * Version: 1.0.0
+ * Version: 1.2.0
  * 免費授權給商業與非商業用途。
  *=============================================================================*/
 /*:
@@ -13,13 +13,17 @@
  * @desc 設定圖層地圖名稱的標記
  * @default AkakazeLayer
  *
- * @param Default Layer Z
+ * @param Layer Z
  * @desc 圖層預設的Z值，在圖層地圖沒有設定Z值的時候啟用。Z值是圖層的高度，Z值大的會覆蓋Z值小的圖層(玩家角色圖層預設是3)。
- * @default 5
+ * @default 4
+ *
+ * @param Parallax Opacity
+ * @desc 圖層預設的Z值，在圖層地圖沒有設定Z值的時候啟用。Z值是圖層的高度，Z值大的會覆蓋Z值小的圖層(玩家角色圖層預設是3)。
+ * @default 200
  * 
  * @help
  * ＞使用方法：
- * 1.將圖層地圖標記，標記方式為: <Layer Tag:Default Layer Z>
+ * 1.將圖層地圖標記，標記方式為: <Layer Tag:X|Y|Z>
  * 2.將圖層地圖置於母地圖之下(編輯器左下，變成能讓母地圖折疊圖層地圖)
  * 
  * ＞將圖層標記設定在圖層名稱(不是顯示名稱！)，除了圖層標記外依然可以設定名稱
@@ -33,32 +37,62 @@
 
 (function() {
     var _map_id;
-    var _layer_id;
     var _data_map;
-    var _layer_isload;
-    var _layer_isReady;
+    var _layer_maps = {};
     var _param = {};
 
     var parameters = PluginManager.parameters('AkakazeLayer');
-    _param["layerTag"] = parameters['Layer Tag']; //"AkakazeLayer"
-    _param["layerZ"] = parseInt(parameters['Default Layer Z'], 10) || 5; //5
+    _param["layerTag"] = parameters['Layer Tag'];
+    _param["layerZ"] = parseInt(parameters['Default Layer Z'], 10) || 4;
+    _param["opacity"] = parseInt(parameters['Parallax Opacity'], 10) || 200;
+    _param["opacity"] = _param["opacity"].clamp(0, 255);
 
     function AkakazeLayerMap() {
         Tilemap.apply(this, arguments);
         this.lastRegionId = 0;
         this.currentRegionId = 0;
     }
-
     AkakazeLayerMap.prototype = Object.create(Tilemap.prototype);
     AkakazeLayerMap.prototype.constructor = AkakazeLayerMap;
-    AkakazeLayerMap.prototype.updatePerspective = function() {
-        var x = $gamePlayer.x;
-        var y = $gamePlayer.y;
-        var ri = this._readMapData(x, y, 5);
-        if (ri !== this.currentRegionId) {
-            this.lastRegionId = this.currentRegionId;
-            this.currentRegionId = ri;
+    AkakazeLayerMap.prototype._createLayers = function() {
+        var width = this._width;
+        var height = this._height;
+        var margin = this._margin;
+        var tileCols = Math.ceil(width / this._tileWidth) + 1;
+        var tileRows = Math.ceil(height / this._tileHeight) + 1;
+        var layerWidth = tileCols * this._tileWidth;
+        var layerHeight = tileRows * this._tileHeight;
+        this._layerWidth = layerWidth;
+        this._layerHeight = layerHeight;
+        this._bitmap = new Bitmap(layerWidth, layerHeight);
+        this._layer = new Sprite();
+        this._layer.move(-margin, -margin,
+            width,
+            height);
+        for (var j = 0; j < 4; j++) {
+            this._layer.addChild(new Sprite(this._bitmap));
         }
+        this.addChild(this._layer);
+    };
+    AkakazeLayerMap.prototype._updateLayerPositions = function(startX, startY) {
+        var m = this._margin;
+        var ox = Math.floor(this.origin.x);
+        var oy = Math.floor(this.origin.y);
+        var x2 = (ox - m).mod(this._layerWidth);
+        var y2 = (oy - m).mod(this._layerHeight);
+        var w1 = this._layerWidth - x2;
+        var h1 = this._layerHeight - y2;
+        var w2 = this._width - w1;
+        var h2 = this._height - h1;
+        children = this._layer.children;
+        children[0].move(0, 0, w1, h1);
+        children[0].setFrame(x2, y2, w1, h1);
+        children[1].move(w1, 0, w2, h1);
+        children[1].setFrame(0, y2, w2, h1);
+        children[2].move(0, h1, w1, h2);
+        children[2].setFrame(x2, 0, w1, h2);
+        children[3].move(w1, h1, w2, h2);
+        children[3].setFrame(0, 0, w2, h2);
     };
     AkakazeLayerMap.prototype._paintAllTiles = function(startX, startY) {
         Tilemap.prototype._paintAllTiles.call(this, startX, startY);
@@ -80,85 +114,66 @@
         var shadowBits = this._readMapData(mx, my, 4);
         var regionId = this._readMapData(mx, my, 5);
         var upperTileId1 = this._readMapData(mx, my - 1, 1);
-        var lowerTiles = [];
-        var upperTiles = [];
+        var tiles = [];
         var regionCheck = false;
 
-        if (this._isHigherTile(tileId0)) {
-            upperTiles.push(tileId0);
-        } else {
-            lowerTiles.push(tileId0);
-        }
-        if (this._isHigherTile(tileId1)) {
-            upperTiles.push(tileId1);
-        } else {
-            lowerTiles.push(tileId1);
-        }
-
-        lowerTiles.push(-shadowBits);
-
+        tiles.push(tileId0);
+        tiles.push(tileId1);
+        tiles.push(-shadowBits);
         if (this._isTableTile(upperTileId1) && !this._isTableTile(tileId1)) {
             if (!Tilemap.isShadowingTile(tileId0)) {
-                lowerTiles.push(tableEdgeVirtualId + upperTileId1);
+                tiles.push(tableEdgeVirtualId + upperTileId1);
             }
         }
+        tiles.push(tileId2);
+        tiles.push(tileId3);
 
-        if (this._isOverpassPosition(mx, my)) {
-            upperTiles.push(tileId2);
-            upperTiles.push(tileId3);
-        } else {
-            if (this._isHigherTile(tileId2)) {
-                upperTiles.push(tileId2);
-            } else {
-                lowerTiles.push(tileId2);
-            }
-            if (this._isHigherTile(tileId3)) {
-                upperTiles.push(tileId3);
-            } else {
-                lowerTiles.push(tileId3);
-            }
+        if (this.lastRegionId !== this.currentRegionId) {
+            regionCheck = true;
         }
 
         if (regionId !== 0 &&
-            this.lastRegionId !== this.currentRegionId) {
-            regionCheck = true;
-            if (regionId === this.currentRegionId) {
-                this._lowerBitmap.paintOpacity = 128;
-                this._upperBitmap.paintOpacity = 128;
-            }
+            regionId === this.currentRegionId) {
+            this._bitmap.paintOpacity = _param["opacity"];
+        } else {
+            this._bitmap.paintOpacity = 255;
         }
 
         var lastLowerTiles = this._readLastTiles(0, lx, ly);
-        if (!lowerTiles.equals(lastLowerTiles) ||
+        if (!tiles.equals(lastLowerTiles) ||
             (Tilemap.isTileA1(tileId0) && this._frameUpdated) ||
             regionCheck) {
-            this._lowerBitmap.clearRect(dx, dy, this._tileWidth, this._tileHeight);
-            for (var i = 0; i < lowerTiles.length; i++) {
-                var lowerTileId = lowerTiles[i];
-                if (lowerTileId < 0) {
-                    this._drawShadow(this._lowerBitmap, shadowBits, dx, dy);
-                } else if (lowerTileId >= tableEdgeVirtualId) {
-                    this._drawTableEdge(this._lowerBitmap, upperTileId1, dx, dy);
+            this._bitmap.clearRect(dx, dy, this._tileWidth, this._tileHeight);
+            for (var i = 0; i < tiles.length; i++) {
+                var tileId = tiles[i];
+                if (tileId < 0) {
+                    this._drawShadow(this._bitmap, shadowBits, dx, dy);
+                } else if (tileId >= tableEdgeVirtualId) {
+                    this._drawTableEdge(this._bitmap, upperTileId1, dx, dy);
                 } else {
-                    this._drawTile(this._lowerBitmap, lowerTileId, dx, dy);
+                    this._drawTile(this._bitmap, tileId, dx, dy);
                 }
             }
-            this._writeLastTiles(0, lx, ly, lowerTiles);
+            this._writeLastTiles(0, lx, ly, tiles);
         }
-
-        var lastUpperTiles = this._readLastTiles(1, lx, ly);
-        if (!upperTiles.equals(lastUpperTiles) ||
-            regionCheck) {
-            this._upperBitmap.clearRect(dx, dy, this._tileWidth, this._tileHeight);
-            for (var j = 0; j < upperTiles.length; j++) {
-                this._drawTile(this._upperBitmap, upperTiles[j], dx, dy);
-            }
-            this._writeLastTiles(1, lx, ly, upperTiles);
-        }
-        this._lowerBitmap.paintOpacity = 255;
-        this._upperBitmap.paintOpacity = 255;
     };
-    AkakazeLayerMap.prototype.constructor = AkakazeLayerMap;
+    AkakazeLayerMap.prototype.setPosition = function(x, y) {
+        this._posX = x;
+        this._posY = y;
+    };
+    AkakazeLayerMap.prototype.updatePosition = function() {
+        this.origin.x = ($gameMap.displayX() - this._posX) * $gameMap.tileWidth();
+        this.origin.y = ($gameMap.displayY() - this._posY) * $gameMap.tileHeight();
+    };
+    AkakazeLayerMap.prototype.updatePerspective = function() {
+        var x = $gamePlayer.x - this._posX;
+        var y = $gamePlayer.y - this._posY;
+        var ri = this._readMapData(x, y, 5);
+        if (ri !== this.currentRegionId) {
+            this.lastRegionId = this.currentRegionId;
+            this.currentRegionId = ri;
+        }
+    };
 
     function getLayerData(map_id) {
         return new Promise(function(resolve, reject) {
@@ -178,12 +193,11 @@
 
     function parseLayerData(mapdata) {
         _data_map = JSON.parse(mapdata);
-        _layer_isload = true;
     }
 
     function AkakazeOnLoad(obj) { // 找出帶有標記的地圖名稱並記錄在 $dataMapInfos
         if (obj === $dataMapInfos) {
-            var re = /<([^<>:]+)(:?)([^>]*)>/;
+            var re = /<([^<>:]+):?(\d*)\|?(\d*)\|?(\d*)>/;
             obj.forEach(function(map) {
                 if (map) {
                     var id = map["id"];
@@ -191,35 +205,33 @@
                     var parent = map["parentId"];
                     var match = name.match(re);
                     if (match && match[1] === _param["layerTag"]) { //param
-                        $dataMapInfos[parent][_param["layerTag"]] = {};
-                        $dataMapInfos[parent][_param["layerTag"]]["id"] = id;
-                        var layer_z = parseInt(match[3]);
-                        if (!Number.isNaN(layer_z)) {
-                            $dataMapInfos[parent][_param["layerTag"]]["z"] = layer_z;
-                        } else {
-                            $dataMapInfos[parent][_param["layerTag"]]["z"] = _param["layerZ"]; //param
-                        }
+                        _layer_maps[parent] = {};
+                        var layer_x = parseInt(match[2]);
+                        var layer_y = parseInt(match[3]);
+                        var layer_z = parseInt(match[4]);
+                        _layer_maps[parent].id = id;
+                        _layer_maps[parent].x = Number.isNaN(layer_x) ? 0 : layer_x;
+                        _layer_maps[parent].y = Number.isNaN(layer_y) ? 0 : layer_y;
+                        _layer_maps[parent].z = Number.isNaN(layer_z) ? _param["layerZ"] : layer_z;
                     }
                 }
             }, this);
+            console.log(_layer_maps);
         }
     }
 
     function AkakazeInitialize() { //初始化數值
         _map_id = null;
-        _layer_id = null;
         _data_map = null;
-        _layer_isload = false;
-        _layer_isReady = false;
     }
 
     function AkakazeCreate() { //讀取圖層地圖
         _map_id = this._transfer ? $gamePlayer.newMapId() : $gameMap.mapId();
-        if ($dataMapInfos[_map_id][_param["layerTag"]]) {
-            _layer_id = $dataMapInfos[_map_id][_param["layerTag"]]["id"];
-            getLayerData(_layer_id)
+        if (_layer_maps[_map_id]) {
+            var layer_id = _layer_maps[_map_id].id;
+            getLayerData(layer_id)
                 .then(parseLayerData);
-        } else _layer_isload = true;
+        }
     }
 
     function getLayerTileMap() { //讀取tileset
@@ -248,20 +260,18 @@
             this.akakaze_tilemap.horizontalWrap = _data_map.scrollType === 2 || _data_map.scrollType === 3;
             this.akakaze_tilemap.verticalWrap = _data_map.scrollType === 1 || _data_map.scrollType === 3;
             getLayerTileMap.call(this);
-            console.log(this.akakaze_tilemap);
-            this.akakaze_tilemap.z = $dataMapInfos[_map_id][_param["layerTag"]]["z"];
+            this.akakaze_tilemap.setPosition(_layer_maps[_map_id].x, _layer_maps[_map_id].y);
+            this.akakaze_tilemap.z = _layer_maps[_map_id].z;
             this._tilemap.addChild(this.akakaze_tilemap);
-
-            _layer_isReady = true;
+            console.log(this.akakaze_tilemap);
         }
     }
 
     function AkakazeUpdate() {
         // console.log("Spriteset_Map.prototype.AkakazeUpdate");
-        if (_layer_isReady) {
+        if (this.akakaze_tilemap && this.akakaze_tilemap.isReady()) {
             this.akakaze_tilemap.updatePerspective();
-            this.akakaze_tilemap.origin.x = $gameMap.displayX() * $gameMap.tileWidth();
-            this.akakaze_tilemap.origin.y = $gameMap.displayY() * $gameMap.tileHeight();
+            this.akakaze_tilemap.updatePosition();
         }
     }
 
